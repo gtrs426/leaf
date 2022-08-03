@@ -18,9 +18,11 @@ type Processor struct {
 	littleEndian bool
 	msgInfo      []*MsgInfo
 	msgID        map[reflect.Type]uint16
+	packID map[uint16]uint16
 }
 
 type MsgInfo struct {
+	packId 		  uint16
 	msgType       reflect.Type
 	msgRouter     *chanrpc.Server
 	msgHandler    MsgHandler
@@ -38,6 +40,7 @@ func NewProcessor() *Processor {
 	p := new(Processor)
 	p.littleEndian = false
 	p.msgID = make(map[reflect.Type]uint16)
+	p.packID = make(map[uint16]uint16)
 	return p
 }
 
@@ -47,7 +50,7 @@ func (p *Processor) SetByteOrder(littleEndian bool) {
 }
 
 // It's dangerous to call the method on routing or marshaling (unmarshaling)
-func (p *Processor) Register(msg proto.Message) uint16 {
+func (p *Processor) Register(packId uint16,msg proto.Message) uint16 {
 	msgType := reflect.TypeOf(msg)
 	if msgType == nil || msgType.Kind() != reflect.Ptr {
 		log.Fatal("protobuf message pointer required")
@@ -64,6 +67,7 @@ func (p *Processor) Register(msg proto.Message) uint16 {
 	p.msgInfo = append(p.msgInfo, i)
 	id := uint16(len(p.msgInfo) - 1)
 	p.msgID[msgType] = id
+	p.packID[packId] = id
 	return id
 }
 
@@ -135,17 +139,19 @@ func (p *Processor) Unmarshal(data []byte) (interface{}, error) {
 	}
 
 	// id
-	var id uint16
+	var packId uint16
 	if p.littleEndian {
-		id = binary.LittleEndian.Uint16(data)
+		packId = binary.LittleEndian.Uint16(data)
 	} else {
-		id = binary.BigEndian.Uint16(data)
-	}
-	if id >= uint16(len(p.msgInfo)) {
-		return nil, fmt.Errorf("message id %v not registered", id)
+		packId = binary.BigEndian.Uint16(data)
 	}
 
 	// msg
+	id,ok := p.packID[packId]
+	if !ok || id >= uint16(len(p.msgInfo)) {
+		return nil, fmt.Errorf("message id %v not registered", id)
+	}
+
 	i := p.msgInfo[id]
 	if i.msgRawHandler != nil {
 		return MsgRaw{id, data[2:]}, nil
